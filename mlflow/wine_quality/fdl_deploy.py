@@ -7,17 +7,9 @@ import fiddler.fiddler_api as fdl
 from fiddler.core_objects import ModelInputType, ModelTask, MLFlowParams, DeploymentOptions
 
 
-#FIDDLER_ENDPOINT = 'https://staging1.fiddler.ai'
-#FIDDLER_TOKEN = '3haqPK9-3JjP5kxWxHuVFZACpIBlIAgQNjiyCY7vKkY'
-#ORG_ID = 'manojtestorg'
-
-FIDDLER_ENDPOINT = 'https://test.fiddler.ai'
-FIDDLER_TOKEN = 'D21nDEXNN_2vcgp_JP0KKmp9topBUzz0b68-JbIHFdk'
-ORG_ID = 'testorg'
-
-#FIDDLER_ENDPOINT = 'http://localhost:6100'
-#FIDDLER_TOKEN = ''
-#ORG_ID = 'onebox'
+FIDDLER_ENDPOINT = 'https://your-org.fiddler.ai'
+FIDDLER_TOKEN = 'your-token'
+ORG_ID = 'your-org'
 
 project_id = 'wine_quality'
 dataset_id = 'mlflow_wine_6'
@@ -38,6 +30,7 @@ def deploy(client):
     if project_id not in client.list_projects():
         client.create_project(project_id)
 
+    # upload dataset if it is not present
     if dataset_id not in client.list_datasets(project_id):
         df = pd.read_csv('wine-quality.csv')
         df['quality'] = df['quality'].astype('float')
@@ -76,25 +69,6 @@ def deploy(client):
         display_name='mlflow model',
         description='this is a sklearn model from tutorial',
     )
-
-    model_info.mlflow_params = MLFlowParams(
-        relative_path_to_saved_model='.',
-        #live_endpoint='http://host.docker.internal:8080/invocations'
-        live_endpoint='http://testorg-wine-quality-mlflow-model-4:8080/invocations'
-    )
-
-    #client.delete_model(project_id, model_id, delete_prod=True, delete_pred=True)
-    #artifact_path = Path('.')
-    #result = client._upload_model_custom(
-        #artifact_path,
-        #model_info,
-        #project_id, 
-        #model_id, 
-        #[dataset_id], 
-        #deployment_type='predictor',
-        #image_uri='manojcheenath/fiddler_examples:latest',
-        #port=8080,
-    #)
 
     deployment_options = DeploymentOptions(
         deployment_type='predictor',
