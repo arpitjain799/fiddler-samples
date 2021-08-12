@@ -74,7 +74,7 @@ See LICENSE File for details.
 
 Here are some links that you will find useful:
 * **[Documentation](https://docs.fiddler.ai/)**
-* **[Full API Reference](https://docs.fiddler.ai/api-reference/python-package/)**
+* **[Full API Reference](https://api.fiddler.ai/api-reference)**
 * **[Fiddler Slack](https://fiddler-community.slack.com/)**
 
 
