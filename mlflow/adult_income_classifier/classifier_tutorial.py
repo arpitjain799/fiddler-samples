@@ -123,7 +123,8 @@ def create_docker_image(
     if dataset is not None:
         X_train, y_train, X_validation, y_validation = dataset
         preds = loaded_model.predict(X_validation)
-        print("predictions:", preds)
+        # print("predictions:", preds)
+        print("Successfuly laoded the model as MLFLOW pyfunc type")
 
     # docker image creation
     with TempDir() as tmp:
@@ -202,6 +203,8 @@ def get_args():
     return args
 
 if __name__=='__main__':
+    args = get_args()
+
     print('\nDownloading training data...')
     dataset, cat_features = get_dataset()
 

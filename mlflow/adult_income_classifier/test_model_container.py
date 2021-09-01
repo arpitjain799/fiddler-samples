@@ -8,7 +8,6 @@ def test_endpoint(url, input_df, target_col):
         if target_col:
             input_df.drop(target_col, axis=1, inplace=True)
         data = input_df.to_json(orient='split', index=False)
-        print(data)
         res = requests.post(url, headers=headers, data=data)
     except Exception as e:
         error_info = res.json()
@@ -38,6 +37,6 @@ def get_args():
 if __name__=='__main__':
     args = get_args()
     print(args.target)
-    df = pd.read_csv(args.csv)
-    test_endpoint(args.url, df.sample(100), args.target)
+    df = pd.read_csv(args.csv, index_col=0)
+    test_endpoint(args.url, df.sample(2), args.target)
 
