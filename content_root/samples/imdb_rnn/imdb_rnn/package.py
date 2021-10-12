@@ -1,151 +1,199 @@
-import numpy as np
-import pathlib
+
 import pickle
-import logging
+import pathlib
+import re
+import numpy as np
 import pandas as pd
 import tensorflow as tf
-from .cover_tokens import strip_accents_and_special_characters
-from .cover_tokens import word_tokenizer
-from .cover_tokens import cover_tokens_new as cover_tokens
-from .cover_tokens import regroup_attributions
-from .tf_saved_model_wrapper_ig import TFSavedModelWrapperIg
+from .GEM import GEMContainer, GEMSimple, GEMText
 
-PACKAGE_PATH = pathlib.Path(__file__).parent
-SAVED_MODEL_PATH = PACKAGE_PATH / 'saved_model'
-TOKENIZER_PATH = PACKAGE_PATH / 'tokenizer.pickle'
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing import sequence
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-LOG = logging.getLogger(__name__)
+# Name the output of your model here - this will need to match the model schema we define in the next notebook
+OUTPUT_COL = ['sentiment']
 
+# These are the names of the inputs of yout TensorFlow model
+FEATURE_LABEL = 'sentence'
 
-class MyModel(TFSavedModelWrapperIg):
-    def __init__(self, saved_model_path, sig_def_key, tokenizer_path,
-                 is_binary_classification=False,
-                 output_key=None,
-                 batch_size=8,
-                 output_columns=[],
-                 input_tensor_to_differentiable_layer_mapping={},
-                 max_allowed_error=None):
+MODEL_ARTIFACT_PATH = 'saved_model'
+
+TOKENIZER_PATH = 'tokenizer.pkl'
+
+ATTRIBUTABLE_LAYER_NAMES = EMBEDDING_NAMES = ['embedding']
+
+MAX_SEQ_LENGTH = 150
+
+def _pad(seq):
+    return pad_sequences(seq, MAX_SEQ_LENGTH,
+                         padding='post', truncating='post')
+
+class FiddlerModel:
+    def __init__(self):
+        """ Model deserialization and initialization goes here.  Any additional serialized preprocession
+            transformations would be initialized as well - e.g. tokenizers, embedding lookups, etc.
         """
-        Class to load and run the IMDB RNN model.
-        See: TFSavedModelWrapper
+        self.model_dir = pathlib.Path(__file__).parent
+        self.model = tf.keras.models.load_model(str(self.model_dir / MODEL_ARTIFACT_PATH))
 
-        Args:
-        :param saved_model_path: Path to the directory containing the TF
-            model in SavedModel format.
-
-        :param sig_def_key: Key for the specific SignatureDef to be used for
-            executing the model.
-
-        :param tokenizer_path: Path to tokenizer (pickle file) used to tokenize
-            the text input.
-
-        :param is_binary_classification: if the model is a binary
-            classification model. If True, the number of output columns is one.
-
-        :param output_key: output_key parameter as specified in the
-            TFSavedModelWrapper class.
-
-        :param batch_size: the batch size for input into the model. Depends
-            on model and instance config.
-
-        :param output_columns: output_columns parameter as specified in the
-            TFSavedModelWrapper class.
-
-        :param max_allowed_error: (int) the absolute value of the maximum
-            allowed integral approximation error for the IG computation.
-            The error must be expressed as a percentage. If None then IG
-            will be calculated for a pre-determined number of steps.
-            Otherwise, the number of steps will be increased till
-            the error is within the specified limit
+        # Construct sub-models (for each ATTRIBUTABLE_LAYER_NAME)
+        # if not possible to attribute directly to the input (e.g. embeddings).
+        self.att_sub_models = {att_layer : Model(self.model.inputs,
+                    outputs=self.model.get_layer(att_layer).output)
+                    for att_layer in ATTRIBUTABLE_LAYER_NAMES}
+        
+        with open(str(self.model_dir / TOKENIZER_PATH), 'rb') as f:
+            self.tokenizer = pickle.load(f)
+        
+        self.grad_model = self._define_model_grads()
+        
+    def get_settings(self):
+        
+        return {'ig_start_steps': 32,  # 32
+                'ig_max_steps': 4096,  # 2048
+                'ig_min_error_pct':5.0 # 1.0
+               }
+        
+    def transform_to_attributable_input(self, input_df):
+        """ This method is called by the platform and is responsible for transforming the input dataframe
+            to the upstream-most representation of model inputs that belongs to a continuous vector-space.
+            For this example, the model inputs themselves meet this requirement.  For models with embedding
+            layers (esp. NLP models) the first attributable layer is downstream of that.
         """
-        super().__init__(saved_model_path, sig_def_key,
-                         is_binary_classification=is_binary_classification,
-                         output_key=output_key,
-                         batch_size=batch_size,
-                         output_columns=output_columns,
-                         input_tensor_to_differentiable_layer_mapping=
-                         input_tensor_to_differentiable_layer_mapping,
-                         max_allowed_error=max_allowed_error)
-        with open(tokenizer_path, 'rb') as handle:
-            self.tokenizer = pickle.load(handle)
-        self.max_seq_length = 512
+        transformed_input = self._transform_input(input_df)
 
-    def transform_input(self, input_df):
+        return {att_layer : att_sub_model.predict(transformed_input)
+                    for att_layer, att_sub_model in self.att_sub_models.items()}
+
+    def get_ig_baseline(self, input_df):
+        """ This method is used to generate the baseline against which to compare the input. 
+            It accepts a pandas DataFrame object containing rows of raw feature vectors that 
+            need to be explained (in case e.g. the baseline must be sized according to the explain point).
+            Must return a pandas DataFrame that can be consumed by the predict method described earlier.
         """
-        Transform the provided dataframe into one that complies with the input
-        interface of the model.
+        baseline_df = input_df.copy()
+        baseline_df[FEATURE_LABEL] = input_df[FEATURE_LABEL].apply(lambda x: '')
 
-        Overrides the transform_input method of TFSavedModelWrapper.
+        return baseline_df
+
+    def _transform_input(self, input_df):
+        """ Helper function that accepts a pandas DataFrame object containing rows of raw feature vectors. 
+            The output of this method can be any Python object. This function can also 
+            be used to deserialize complex data types stored in dataset columns (e.g. arrays, or images 
+            stored in a field in UTF-8 format).
         """
-
-        input_tokens = (input_df['sentence']
-                        .apply(lambda x: self.tokenizer.encode(
-                                strip_accents_and_special_characters(x))))
-
-        input_tokens = input_tokens.apply(lambda x: self._pad(x))
-
-        return pd.DataFrame({'embedding_input': input_tokens.values.tolist()})
-
-    def generate_baseline(self, input_df):
-
-        input_tokens = input_df['sentence'].apply(lambda x:
-                                                  self.tokenizer.encode(''))
-        input_tokens = input_tokens.apply(lambda x: self._pad(x))
-
-        return pd.DataFrame({'embedding_input': input_tokens.values.tolist()})
-
-    def project_attributions(self, input_df, transformed_input_df,
-                             attributions):
+        sequences = self.tokenizer.texts_to_sequences(input_df[FEATURE_LABEL])
+        sequences_matrix = sequence.pad_sequences(sequences,
+                                                  maxlen=MAX_SEQ_LENGTH,
+                                                  padding='post')
+        return sequences_matrix.tolist()
+    
+    
+    def predict(self, input_df):
+        """ Basic predict wrapper.  Takes a DataFrame of input features and returns a DataFrame
+            of predictions.
         """
-        Maps the transformed input to original input space so that the
-        attributions correspond to the features of the original input.
-        Overrides the project_attributions method of TFSavedModelWrapper.
+        transformed_input = self._transform_input(input_df)
+        pred = self.model.predict(transformed_input)
+        return pd.DataFrame(pred, columns=OUTPUT_COL)
+    
+    def compute_gradients(self, attributable_input):
+        """ This method computes gradients of the model output wrt to the differentiable input. 
+            If there are embeddings, the attributable_input should be the output of the embedding 
+            layer. In the backend, this method receives the output of the transform_to_attributable_input() 
+            method. This must return an array of dictionaries, where each entry of the array is the attribution 
+            for an output. As in the example provided, in case of single output models, this is an array with 
+            single entry. For the dictionary, the key is the name of the input layer and the values are the 
+            attributions.
         """
+        gradients_by_output = []
+        attributable_input_tensor = {k: tf.identity(v) for k, v in attributable_input.items()}
+        gradients_dic_tf = self._gradients_input(attributable_input_tensor)
+        gradients_dic_numpy = dict([key, np.asarray(value)] for key, value in gradients_dic_tf.items()) 
+        gradients_by_output.append(gradients_dic_numpy)
+        return gradients_by_output    
+    
+    def _gradients_input(self, x):
+        """
+        Function to Compute gradients.
+        """
+        with tf.GradientTape() as tape:
+            tape.watch(x)
+            preds = self.grad_model(x)
 
-        wordpiece_tokens = [self.tokenizer.decode([int(t)]) for t in
-                            (transformed_input_df['embedding_input'][0]
-                             .tolist())]
+        grads = tape.gradient(preds, x)
 
-        word_tokens = word_tokenizer(
-            strip_accents_and_special_characters(
-                input_df['sentence'].iloc[0]))
+        return grads
 
-        coverings = cover_tokens(word_tokens,
-                                 wordpiece_tokens,
-                                 num_fine_tokens_to_be_matched=
-                                 self.max_seq_length)
 
-        word_attributions = regroup_attributions(
-            coverings,
-            attributions['embedding_input'][0].astype(
-                'float').tolist())
-        if word_attributions:
-            return {'embedding_input': [word_tokens, word_attributions]}
-        else:
-            LOG.info('Cover tokens failed.  Falling back to wordpiece tokens')
-            return {'embedding_input': [wordpiece_tokens,
-                                        attributions['embedding_input'
-                                                     ][0].astype(
-                                                     'float').tolist()
-                                        ]}
+    def _define_model_grads(self):
+        """
+        Define a differentiable model, cut from the Embedding Layers. 
+        This will take as input what the transform_to_attributable_input function defined.
+        """
+        model = tf.keras.models.load_model(str(self.model_dir / 'saved_model'))
 
-    def _pad(self, a):
-        a_padded = np.zeros(self.max_seq_length)
-        a_padded[:min(len(a), self.max_seq_length)] = \
-            a[:min(len(a), self.max_seq_length)]
-        return a_padded
+        for index, name in enumerate(EMBEDDING_NAMES):
+            model.layers.remove(model.get_layer(name))
+            model.layers[index]._batch_input_shape = (None, 150, 64)
+            model.layers[index]._dtype = 'float32'
+            model.layers[index]._name = name
+
+        new_model = tf.keras.models.model_from_json(model.to_json())
+
+        for layer in new_model.layers:
+            try:
+                layer.set_weights(self.model.get_layer(name=layer.name).get_weights())
+            except:
+                pass
+        
+        return new_model
+
+
+    def project_attributions(self, input_df, attributions):
+        explanations_by_output = {}
+
+        for output_field_index, att in enumerate(attributions):           
+            segments = re.split(r'([ ' + self.tokenizer.filters + '])',
+                                input_df.iloc[0][FEATURE_LABEL])
+
+            unpadded_tokens = [self.tokenizer.texts_to_sequences([x])[0] for x
+                              in input_df[FEATURE_LABEL].values]
+
+            padded_tokens = _pad(unpadded_tokens)
+
+            word_tokens = self.tokenizer.sequences_to_texts(
+                [[x] for x in padded_tokens[0]])
+
+            # Note - summing over attributions in the embedding direction
+            word_attributions = np.sum(att['embedding'][-len(word_tokens):],
+                                       axis=1)
+
+            i = 0
+            final_attributions = []
+            final_segments = []
+            for segment in segments:
+                if segment is not '':  # dump empty tokens
+                    final_segments.append(segment)
+                    seg_low = segment.lower()
+                    if len(word_tokens) > i and seg_low == word_tokens[i]:
+                        final_attributions.append(word_attributions[i])
+                        i += 1
+                    else:
+                        final_attributions.append(0)
+
+            gem_text = GEMText(feature_name=FEATURE_LABEL,
+                               text_segments=final_segments,
+                               text_attributions=final_attributions)
+
+            gem_container = GEMContainer(contents=[gem_text])
+
+            explanations_by_output[OUTPUT_COL[output_field_index]] \
+                = gem_container.render()
+
+        return explanations_by_output
 
 
 def get_model():
-    model = MyModel(
-        SAVED_MODEL_PATH,
-        tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY,
-        TOKENIZER_PATH,
-        is_binary_classification=True,
-        batch_size=200,
-        output_columns=['embedding_input'],
-        input_tensor_to_differentiable_layer_mapping=
-        {'embedding_input': 'embedding/embedding_lookup:0'},
-        max_allowed_error=5)
-    model.load_model()
-    return model
+    return FiddlerModel()

@@ -1,19 +1,71 @@
 model:
-    name: ' model'
-    input-type: structured
-    model-task: binary_classification
-    inputs:
-    - {column-name: age, data-type: int}
-    - {column-name: sex, data-type: int}
-    - {column-name: trestbps, data-type: int}
-    - {column-name: chol, data-type: int}
-    - {column-name: fbs, data-type: int}
-    - {column-name: thalach, data-type: int}
-    - {column-name: exang, data-type: int}
-    - {column-name: oldpeak, data-type: float}
-    - {column-name: slope, data-type: int}
-    outputs:
-    - {column-name: predicted_target, data-type: float}
-    targets:
-    - {column-name: target, data-type: int}
-    datasets: [heart_disease]
+  binary_classification_threshold: 0.5
+  custom-explanation-names: []
+  datasets:
+  - heart_disease
+  description: this is a keras model using tabular data and IG enabled from tutorial
+  input-type: structured
+  inputs:
+  - column-name: age
+    data-type: int
+    is-nullable: false
+    value-range-max: 77
+    value-range-min: 29
+  - column-name: sex
+    data-type: int
+    is-nullable: false
+    value-range-max: 1
+    value-range-min: 0
+  - column-name: trestbps
+    data-type: int
+    is-nullable: false
+    value-range-max: 200
+    value-range-min: 94
+  - column-name: chol
+    data-type: int
+    is-nullable: false
+    value-range-max: 564
+    value-range-min: 126
+  - column-name: fbs
+    data-type: int
+    is-nullable: false
+    value-range-max: 1
+    value-range-min: 0
+  - column-name: thalach
+    data-type: int
+    is-nullable: false
+    value-range-max: 202
+    value-range-min: 71
+  - column-name: exang
+    data-type: int
+    is-nullable: false
+    value-range-max: 1
+    value-range-min: 0
+  - column-name: oldpeak
+    data-type: float
+    is-nullable: false
+    value-range-max: 6.2
+    value-range-min: 0.0
+  - column-name: slope
+    data-type: int
+    is-nullable: false
+    value-range-max: 3
+    value-range-min: 1
+  model-task: binary_classification
+  name: Keras Tabular IG
+  outputs:
+  - column-name: probability_target_1
+    data-type: float
+    is-nullable: false
+    value-range-max: 1.0
+    value-range-min: 0.0
+  preferred-explanation-method: ig_flex
+  target-class-order:
+  - 0
+  - 1
+  targets:
+  - column-name: target
+    data-type: int
+    is-nullable: false
+    value-range-max: 1
+    value-range-min: 0
