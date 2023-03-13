@@ -1,6 +1,6 @@
 # Deprecated: Fiddler examples have moved!
 
-*Dear user thank you for your interest in fiddler examples, we appreciate your time! We have moved the examples to a new github repo located at the following link*
+_Dear user thank you for your interest in fiddler examples, we appreciate your time! We have moved the examples to a new github repo located at the following link_
 
 [New fiddler-examples repo](https://github.com/fiddler-labs/fiddler-examples)
 
